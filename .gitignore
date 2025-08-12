@@ -1,1 +1,3 @@
 vendored/
+*.fasl
+*.fas

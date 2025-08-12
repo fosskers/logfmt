@@ -5,7 +5,9 @@
   :homepage "https://github.com/fosskers/logfmt"
   :depends-on (:parcom :parcom/datetime)
   :serial t
-  :components ((:module "src" :components ((:file "package"))))
+  :components ((:module "src"
+                :components ((:file "package")
+                             (:file "parser"))))
   :description "")
 
 (defsystem "logfmt/tests"
