@@ -2,7 +2,8 @@
   (:use :cl)
   (:import-from :parcom #:<*> #:<* #:*> #:<$)
   (:local-nicknames (#:p #:parcom))
-  (:documentation ""))
+  (:export #:parse #:safe-parse #:read-file-into-string)
+  (:documentation "Parser for the logfmt logging style."))
 
 (in-package :logfmt)
 

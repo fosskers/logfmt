@@ -10,7 +10,19 @@
 ;; --- Parsers --- ;;
 
 (defun parse (s)
+  "Parse a single log line."
   (p:parse (<* #'pairs #'p:eof) s))
+
+(defun safe-parse (s)
+  "Parse a single log line, but yields NIL if parsing failed.
+Can be used to skip garbage lines in a file that don't conform to logfmt syntax."
+  (multiple-value-bind (res next) (funcall (<* #'pairs #'p:eof) (p:in s))
+    (declare (ignore next))
+    (when (p:ok? res)
+      res)))
+
+#+nil
+(safe-parse "ts=2025-08-08T13:42:42.148 zzz level=info msg=foo run_id=ox_joKSkGaSYZ_sOL-kbU exec_name=hoods")
 
 (defun pairs (offset)
   "Parse multiple key-value pairs into a Hash Table."
@@ -45,7 +57,9 @@
 
 (defun key (offset)
   "The key portion of a single key-value pair."
-  (funcall (p:take-while1 (lambda (c) (not (char= c #\=)))) offset))
+  (funcall (p:take-while1 (lambda (c) (and (not (char= c #\=))
+                                           (not (char= c #\space)))))
+           offset))
 
 #+nil
 (p:parse #'key "msg=foo")
