@@ -38,28 +38,79 @@
                      (t (recur (cons curr acc) parent))))))
     (recur '() id)))
 
+(defun direct-child? (parent chain)
+  (string= parent (car (last (butlast chain)))))
+
+(defun id (entry)
+  "The ID of a particular entry."
+  (-> entry (getf :chain) last car))
+
+(defun build-tree (curr rest)
+  (let ((id (id curr)))
+    (list :took (getf curr :took)
+          :chain (getf curr :chain)
+          :children (t:transduce
+                     (t:comp (t:filter (lambda (other) (direct-child? id (getf other :chain))))
+                             (t:map (lambda (child)
+                                      (let ((child-id (id child)))
+                                        (build-tree child (t:transduce
+                                                           (t:filter (lambda (other) (direct-child? child-id (getf other :chain))))
+                                                           #'t:cons rest))))))
+                     #'t:cons rest))))
+
+(defun descend (tree)
+  "Recursively descend through the tree, summing and subtracting `took' weights as necessary."
+  (if (null (getf tree :children))
+      (let ((took (getf tree :took)))
+        (values took (list (list :took took :chain (getf tree :chain)))))
+      (destructuring-bind (acc . children-took)
+          (t:transduce
+           #'t:pass
+           (t:fold (lambda (pair child)
+                     (destructuring-bind (acc . total-took) pair
+                       (multiple-value-bind (child-took v) (descend child)
+                         (cons (append v acc) (+ total-took child-took)))))
+                   (cons '() 0))
+           (getf tree :children))
+        (let ((this-took (- (getf tree :took) children-took)))
+          (values (+ this-took children-took)
+                  (cons (list :took this-took :chain (getf tree :chain))
+                        acc))))))
+
 #+nil
 (let* ((total (-<>> (entries-from-file #p"tests/logs.txt")
                     (sort <> #'string< :key (lambda (plist) (getf plist :id)))
                     (t:transduce (t:comp (t:group-by (lambda (plist) (getf plist :id)))
                                          (t:map (lambda (list)
+                                                  ;; FIXME: Still only getting the first one here. Need more.
                                                   (car (sort list #'> :key (lambda (plist) (getf plist :took)))))))
                                  #'t:cons)))
        (parents (make-hash-table :test #'equal))
-       (names (make-hash-table :test #'equal))
-       (test-id "NKMc98CL8aaeqi582R1tL"))
+       (names (make-hash-table :test #'equal)))
   (dolist (plist total)
     (setf (gethash (getf plist :id) parents) (getf plist :parent))
     (setf (gethash (getf plist :id) names) (getf plist :name)))
-  (with-open-file (stream #p"FLAMES.txt" :direction :output :if-exists :supersede)
-    (t:transduce (t:comp (t:map (lambda (entry)
-                                  (let* ((id (getf entry :id))
-                                         (id-chain (t:transduce (t:comp (t:map (lambda (pid) (gethash pid names)))
-                                                                        (t:intersperse ";")
-                                                                        #'t:flatten)
-                                                                #'t:string (id-hierarchy parents id))))
-                                    (format nil "~a ~a" id-chain (getf entry :took))))))
-                 (t:for (lambda (line) (write-line line stream))) total)))
+  (let* ((chained (t:transduce (t:map (lambda (entry)
+                                        (list :took (getf entry :took)
+                                              :chain (id-hierarchy parents (getf entry :id)))))
+                               #'t:cons total))
+         (sorted (sort chained #'< :key (lambda (list) (length (getf list :chain)))))
+         (tree (build-tree (car sorted) (cdr sorted))))
+    (multiple-value-bind (took chains) (descend tree)
+      (let* ((lines (t:transduce
+                     (t:map (lambda (entry)
+                              (let ((id-chain (t:transduce (t:comp (t:map (lambda (pid) (gethash pid names)))
+                                                                   (t:intersperse ";")
+                                                                   #'t:flatten)
+                                                           #'t:string (getf entry :chain))))
+                                (format nil "~a ~a" id-chain (getf entry :took)))))
+                     #'t:cons chains))
+             #+nil
+             (sorted (sort lines #'string<)))
+        chains
+        #+nil
+        (with-open-file (stream #p"FLAMES.txt" :direction :output :if-exists :supersede)
+          (t:transduce #'t:pass (t:for (lambda (line) (write-line line stream))) lines))))))
 
 ;; TODO: For each entry:
 ;;
