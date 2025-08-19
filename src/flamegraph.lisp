@@ -68,57 +68,78 @@
 #+nil
 (simplify-name "cot_solid_mass")
 
-#+nil
-(let* ((total (-<>> (entries-from-file #p"tests/logs.txt")
-                    (sort <> #'string< :key (lambda (plist) (getf plist :id)))
-                    (t:transduce
-                     (t:comp
-                      (t:group-by (lambda (plist) (getf plist :id)))
-                      (t:map (lambda (list)
-                               (let* ((sorted (sort list #'> :key (lambda (plist) (getf plist :took))))
-                                      (parent (car sorted))
-                                      (kids   (cdr sorted)))
-                                 (cons parent
-                                       (t:transduce
-                                        (t:comp #'t:enumerate
-                                                (t:map (lambda (pair)
-                                                         (let* ((i (car pair))
-                                                                (child (cdr pair))
-                                                                (name (concatenate 'string
-                                                                                   (simplify-name (getf parent :name))
-                                                                                   "_"
-                                                                                   (t:transduce (t:map (lambda (c) (if (char= c #\space) #\_ c)))
-                                                                                                #'t:string (getf child :msg)))))
-                                                           (list :name name
-                                                                 :msg  (getf child :msg)
-                                                                 :took (getf child :took)
-                                                                 :parent (getf child :id)
-                                                                 :id (concatenate 'string "cgw-" (b64:string-to-base64-string (format nil "~d~a~a" i (getf child :id) name))))))))
-                                        #'t:cons kids)))))
-                      #'t:concatenate)
-                     #'t:cons)))
-       (parents (make-hash-table :test #'equal))
-       (names (make-hash-table :test #'equal)))
-  (dolist (plist total)
-    (setf (gethash (getf plist :id) parents) (getf plist :parent))
-    (setf (gethash (getf plist :id) names) (getf plist :name)))
-  (let* ((chained (t:transduce (t:map (lambda (entry)
-                                        (list :took (getf entry :took)
-                                              :chain (id-hierarchy parents (getf entry :id)))))
-                               #'t:cons total))
-         (sorted (sort chained #'< :key (lambda (list) (length (getf list :chain)))))
-         (tree (build-tree (car sorted) (cdr sorted))))
-    (multiple-value-bind (took chains) (descend tree)
-      (let* ((lines (t:transduce
-                     (t:map (lambda (entry)
-                              (let ((id-chain (t:transduce (t:comp (t:map (lambda (pid) (gethash pid names)))
-                                                                   (t:intersperse ";")
-                                                                   #'t:flatten)
-                                                           #'t:string (getf entry :chain))))
-                                (format nil "~a ~a" id-chain (getf entry :took)))))
-                     #'t:cons chains))
-             #+nil
-             (sorted (sort lines #'string<)))
-        (with-open-file (stream #p"FLAMES.txt" :direction :output :if-exists :supersede)
-          (t:transduce #'t:pass (t:for (lambda (line) (write-line line stream))) lines))))))
+(defun sanitize-entries (entries)
+  "Strategically reassign IDs so that `took' messages within the same binary are
+properly unique."
+  (t:transduce
+   (t:comp
+    (t:group-by (lambda (plist) (getf plist :id)))
+    (t:map (lambda (list)
+             (let* ((sorted (sort list #'> :key (lambda (plist) (getf plist :took))))
+                    (parent (car sorted))
+                    (kids   (cdr sorted)))
+               (cons parent
+                     (t:transduce
+                      (t:comp #'t:enumerate
+                              (t:map (lambda (pair)
+                                       (let* ((i (car pair))
+                                              (child (cdr pair))
+                                              (name (concatenate 'string
+                                                                 (simplify-name (getf parent :name))
+                                                                 "_"
+                                                                 (t:transduce (t:map (lambda (c) (if (char= c #\space) #\_ c)))
+                                                                              #'t:string (getf child :msg)))))
+                                         (list :name name
+                                               :msg  (getf child :msg)
+                                               :took (getf child :took)
+                                               :parent (getf child :id)
+                                               :id (concatenate 'string "cgw-" (b64:string-to-base64-string (format nil "~d~a~a" i (getf child :id) name))))))))
+                      #'t:cons kids)))))
+    #'t:concatenate)
+   #'t:cons entries))
 
+(defun render-entries (names entries)
+  "Given a lookup of all IDs to their original names, render each `entry' into its
+flamegraph-compatible format."
+  (t:transduce
+   (t:map (lambda (entry)
+            (let ((id-chain (t:transduce (t:comp (t:map (lambda (pid) (gethash pid names)))
+                                                 (t:intersperse ";")
+                                                 #'t:flatten)
+                                         #'t:string (getf entry :chain))))
+              (format nil "~a ~a" id-chain (getf entry :took)))))
+   #'t:cons entries))
+
+(defun flamegraph (in-path)
+  "Read a logfmt file and produce flamegraph entries."
+  (let* ((entries (-<>> (entries-from-file in-path)
+                        (sort <> #'string< :key (lambda (plist) (getf plist :id)))
+                        (sanitize-entries)))
+         (parents (make-hash-table :test #'equal))
+         (names (make-hash-table :test #'equal)))
+    (dolist (plist entries)
+      (setf (gethash (getf plist :id) parents) (getf plist :parent))
+      (setf (gethash (getf plist :id) names) (getf plist :name)))
+    (let* ((chained (t:transduce (t:map (lambda (entry)
+                                          (list :took (getf entry :took)
+                                                :chain (id-hierarchy parents (getf entry :id)))))
+                                 #'t:cons entries))
+           (sorted (sort chained #'< :key (lambda (list) (length (getf list :chain)))))
+           ;; NOTE: The item with the shortest chain (presumably length 1)
+           ;; should be definition be the item that took the longest. In other
+           ;; words, the top-level program. Hence the `sort' call above and the
+           ;; `car' call below.
+           (tree (build-tree (car sorted) (cdr sorted))))
+      (multiple-value-bind (took chains) (descend tree)
+        (declare (ignore took))
+        (render-entries names chains)))))
+
+#+nil
+(flamegraph #p"tests/logs.txt")
+
+(defun write-entries (out-path entries)
+  (with-open-file (stream out-path :direction :output :if-exists :supersede)
+    (t:transduce #'t:pass (t:for (lambda (line) (write-line line stream))) entries)))
+
+#+nil
+(write-entries #p"FLAMES.txt" (flamegraph #p"tests/logs.txt"))
