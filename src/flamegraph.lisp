@@ -56,17 +56,14 @@
                          (cons (append v acc) (+ total-took child-took)))))
                    (cons '() 0))
            (getf tree :children))
-        (let ((this-took (- (getf tree :took) children-took)))
+        ;; HACK: 2025-08-19 For large log files I'm still getting a total
+        ;; negative time for the top-level script, but only by a few hundred
+        ;; milliseconds. Rounding error among the blocks? Not sure. For now,
+        ;; rejecting anything that reports a negative time is a workaround.
+        (let ((this-took (max 0 (- (getf tree :took) children-took))))
           (values (+ this-took children-took)
                   (cons (list :took this-took :chain (getf tree :chain))
                         acc))))))
-
-(defun simplify-name (name)
-  "Reduce a name to just the initial character of each snake-case section."
-  (t:transduce (t:map (lambda (s) (char s 0))) #'t:string (t::string-split name :separator #\_)))
-
-#+nil
-(simplify-name "cot_solid_mass")
 
 (defun sanitize-entries (entries)
   "Strategically reassign IDs so that `took' messages within the same binary are
@@ -84,16 +81,13 @@ properly unique."
                               (t:map (lambda (pair)
                                        (let* ((i (car pair))
                                               (child (cdr pair))
-                                              (name (concatenate 'string
-                                                                 (simplify-name (getf parent :name))
-                                                                 "_"
-                                                                 (t:transduce (t:map (lambda (c) (if (char= c #\space) #\_ c)))
-                                                                              #'t:string (getf child :msg)))))
+                                              (name (t:transduce (t:map (lambda (c) (if (char= c #\space) #\_ c)))
+                                                                 #'t:string (getf child :msg))))
                                          (list :name name
                                                :msg  (getf child :msg)
                                                :took (getf child :took)
                                                :parent (getf child :id)
-                                               :id (concatenate 'string "cgw-" (b64:string-to-base64-string (format nil "~d~a~a" i (getf child :id) name))))))))
+                                               :id (b64:string-to-base64-string (format nil "~d~a~a" i (getf child :id) name)))))))
                       #'t:cons kids)))))
     #'t:concatenate)
    #'t:cons entries))
