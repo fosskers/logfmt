@@ -11,7 +11,7 @@
   :description "Parser for the logfmt logging style.")
 
 (defsystem "logfmt/flamegraph"
-  :depends-on (:logfmt :transducers :arrow-macros)
+  :depends-on (:logfmt :transducers :arrow-macros :cl-base64)
   :components ((:module "src" :components ((:file "flamegraph"))))
   :description "Generating flamegraph data from log messages.")
 

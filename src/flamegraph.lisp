@@ -1,23 +1,9 @@
 (defpackage logfmt/flamegraph
   (:use :cl :arrow-macros)
-  (:local-nicknames (#:t #:transducers)))
+  (:local-nicknames (#:t #:transducers)
+                    (#:b64 #:cl-base64)))
 
 (in-package :logfmt/flamegraph)
-
-;; It might not matter that all you have to differentiate timing lines from the
-;; same executable is the `msg'. The line that measures the runtime of the whole
-;; program should always be the longest, and it would contain the times of the
-;; other sub pieces. So, it's always (- longest rest). However, this assumes
-;; that each callable thing is always providing its own total timing. This is
-;; probably a safe assumption, or else each call (imagined as a function call)
-;; won't report useful total timing data. The resulting flamegraph would be
-;; inaccurate.
-;;
-;; Or, perhaps, the total program timing message should just have no `msg'. But
-;; then does that makes the logs themselves less useful? Maybe, and it's also a
-;; source of footgun. Somebody writing any old program that they want to time
-;; would have to remember each time that a message can't be given for the
-;; top-level.
 
 (defun entries-from-file (path)
   "Read all perf-related messages from a logging file."
@@ -39,6 +25,7 @@
     (recur '() id)))
 
 (defun direct-child? (parent chain)
+  "Is some entry, represented by its call chain, the direct child of a given parent?"
   (string= parent (car (last (butlast chain)))))
 
 (defun id (entry)
@@ -46,16 +33,13 @@
   (-> entry (getf :chain) last car))
 
 (defun build-tree (curr rest)
+  "Given all known call chains, recursively form a tree of their call structure."
   (let ((id (id curr)))
     (list :took (getf curr :took)
           :chain (getf curr :chain)
           :children (t:transduce
                      (t:comp (t:filter (lambda (other) (direct-child? id (getf other :chain))))
-                             (t:map (lambda (child)
-                                      (let ((child-id (id child)))
-                                        (build-tree child (t:transduce
-                                                           (t:filter (lambda (other) (direct-child? child-id (getf other :chain))))
-                                                           #'t:cons rest))))))
+                             (t:map (lambda (child) (build-tree child rest))))
                      #'t:cons rest))))
 
 (defun descend (tree)
@@ -77,14 +61,42 @@
                   (cons (list :took this-took :chain (getf tree :chain))
                         acc))))))
 
+(defun simplify-name (name)
+  "Reduce a name to just the initial character of each snake-case section."
+  (t:transduce (t:map (lambda (s) (char s 0))) #'t:string (t::string-split name :separator #\_)))
+
+#+nil
+(simplify-name "cot_solid_mass")
+
 #+nil
 (let* ((total (-<>> (entries-from-file #p"tests/logs.txt")
                     (sort <> #'string< :key (lambda (plist) (getf plist :id)))
-                    (t:transduce (t:comp (t:group-by (lambda (plist) (getf plist :id)))
-                                         (t:map (lambda (list)
-                                                  ;; FIXME: Still only getting the first one here. Need more.
-                                                  (car (sort list #'> :key (lambda (plist) (getf plist :took)))))))
-                                 #'t:cons)))
+                    (t:transduce
+                     (t:comp
+                      (t:group-by (lambda (plist) (getf plist :id)))
+                      (t:map (lambda (list)
+                               (let* ((sorted (sort list #'> :key (lambda (plist) (getf plist :took))))
+                                      (parent (car sorted))
+                                      (kids   (cdr sorted)))
+                                 (cons parent
+                                       (t:transduce
+                                        (t:comp #'t:enumerate
+                                                (t:map (lambda (pair)
+                                                         (let* ((i (car pair))
+                                                                (child (cdr pair))
+                                                                (name (concatenate 'string
+                                                                                   (simplify-name (getf parent :name))
+                                                                                   "_"
+                                                                                   (t:transduce (t:map (lambda (c) (if (char= c #\space) #\_ c)))
+                                                                                                #'t:string (getf child :msg)))))
+                                                           (list :name name
+                                                                 :msg  (getf child :msg)
+                                                                 :took (getf child :took)
+                                                                 :parent (getf child :id)
+                                                                 :id (concatenate 'string "cgw-" (b64:string-to-base64-string (format nil "~d~a~a" i (getf child :id) name))))))))
+                                        #'t:cons kids)))))
+                      #'t:concatenate)
+                     #'t:cons)))
        (parents (make-hash-table :test #'equal))
        (names (make-hash-table :test #'equal)))
   (dolist (plist total)
@@ -107,15 +119,6 @@
                      #'t:cons chains))
              #+nil
              (sorted (sort lines #'string<)))
-        chains
-        #+nil
         (with-open-file (stream #p"FLAMES.txt" :direction :output :if-exists :supersede)
           (t:transduce #'t:pass (t:for (lambda (line) (write-line line stream))) lines))))))
 
-;; TODO: For each entry:
-;;
-;; - Grab its id-chain and make them all names.
-;; - Grab its `took' and append it to the chain string.
-;; - Yield a final list of all results. That's the flamegraph?
-;;
-;; No you still need to do subtracting.
