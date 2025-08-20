@@ -6,6 +6,12 @@ This library is a parser for the [[https://brandur.org/logfmt][logfmt]] style of
 level=info msg="Hello there!" foo=3 bar=ok
 #+end_example
 
+* Table of Contents :TOC_5_gh:noexport:
+- [[#api][API]]
+  - [[#parse][parse]]
+  - [[#safe-parse][safe-parse]]
+  - [[#read-file-into-string][read-file-into-string]]
+
 * API
 
 ** parse
