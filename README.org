@@ -1,0 +1,53 @@
+#+title: logfmt
+
+This library is a parser for the [[https://brandur.org/logfmt][logfmt]] style of logging messages.
+
+#+begin_example
+level=info msg="Hello there!" foo=3 bar=ok
+#+end_example
+
+* API
+
+** parse
+
+Parse a single log line into a Hash Table.
+
+#+begin_src lisp :results verbatim :exports both
+(logfmt:parse "level=info msg=\"Hello there!\" foo=3 bar=ok")
+#+end_src
+
+#+RESULTS:
+: #<HASH-TABLE :TEST EQUAL :COUNT 4 {12016FB513}>
+
+Numbers are parsed as numbers, but everything else is taken as-is as a string.
+
+#+begin_src lisp :exports both
+(1+ (gethash "foo" (logfmt:parse "level=info msg=\"Hello there!\" foo=3 bar=ok")))
+#+end_src
+
+#+RESULTS:
+: 4
+
+** safe-parse
+
+=parse= will signal a Condition if parsing failed, but =safe-parse= will just yield =nil=.
+
+#+begin_src lisp :results verbatim :exports both
+(logfmt:safe-parse "level=info BAD msg=\"Hello there!\" foo=3 bar=ok")
+#+end_src
+
+#+RESULTS:
+: NIL
+
+** read-file-into-string
+
+A fast, compatible way to read the contents of a file into a string.
+
+#+begin_src lisp :exports both
+(length (logfmt:read-file-into-string #p"README.org"))
+#+end_src
+
+#+RESULTS:
+: 937
+
+You could then run =parse= across each line.
