@@ -10,8 +10,11 @@
 ;; --- Parsers --- ;;
 
 (defun parse (s)
-  "Parse a single log line."
+  "Parse a single log line into a Hash Table."
   (p:parse (<* #'pairs #'p:eof) s))
+
+#+nil
+(parse "level=info msg=\"Hello there!\" foo=3 bar=ok")
 
 (defun safe-parse (s)
   "Parse a single log line, but yields NIL if parsing failed.
