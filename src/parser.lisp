@@ -71,7 +71,7 @@ Can be used to skip garbage lines in a file that don't conform to logfmt syntax.
   "The value portion of a single key-value pair."
   (funcall (p:alt (<* #'p:unsigned +value-end+)
                   #'quoted
-                  (p:take-while1 (lambda (c) (not (char= c #\space)))))
+                  (p:take-while (lambda (c) (not (char= c #\space)))))
            offset))
 
 #+nil
