@@ -43,10 +43,7 @@ Can be used to skip garbage lines in a file that don't conform to logfmt syntax.
 (parse "ts=2025-08-08T13:42:42.148 level=info msg=foo run_id=ox_joKSkGaSYZ_sOL-kbU exec_name=hoods")
 
 #+nil
-(parse "msg=\"foo bar\" took=100")
-
-#+nil
-(parse "ts=2025-08-08T13:42:42.148 level=info msg=\"Skipping pushing to database, as config_json_path, unique_id_func, and/or database_handler is None.\" run_id=ox_joKSkGaSYZ_sOL-kbU exec_name=hoods")
+(parse "msg=\"foo \\\" bar\" took=100")
 
 ;; TODO: 2025-08-12 Avoid the list allocation if possible.
 (defun pair (offset)
@@ -80,9 +77,46 @@ Can be used to skip garbage lines in a file that don't conform to logfmt syntax.
 (defun quoted (offset)
   "Parser: A quoted string that may contain spaces, etc."
   (funcall (p:between +quote+
-                      (p:take-while1 (lambda (c) (not (char= c #\"))))
+                      (sliding-take (lambda (a b)
+                                      (cond ((and (char= a #\\)
+                                                  (char= b #\"))
+                                             (values :two #\"))
+                                            ((not (char= a #\")) (values :one a)))))
                       +quote+)
            offset))
 
 #+nil
 (p:parse #'quoted "\"foo bar\"")
+#+nil
+(p:parse #'quoted "\"foo \\\" bar\"")
+
+(defun sliding-take (f)
+  (lambda (offset)
+    (declare (optimize (speed 3) (safety 0)))
+    (let* ((s (make-array 16 :element-type 'character :adjustable t :fill-pointer 0))
+           (keep (loop :with i fixnum := offset
+                       :while (< i p::*input-length*)
+                       :do (let ((a (schar p::*input* i))
+                                 (b (if (< i (1- p::*input-length*))
+                                        (schar p::*input* (1+ i))
+                                        #\Nul)))
+                             (multiple-value-bind (kw c) (funcall f a b)
+                               (case kw
+                                 (:one
+                                  (incf i)
+                                  (vector-push-extend c s))
+                                 (:two
+                                  (incf i 2)
+                                  (vector-push-extend c s))
+                                 (t (return (- i offset))))))
+                       :finally (return (- i offset))))
+           (next (p::off keep offset)))
+      (values s next))))
+
+#+nil
+(p:parse (sliding-take (lambda (a b)
+                         (cond ((and (char= a #\\)
+                                     (char= b #\"))
+                                (values :two #\"))
+                               (t (values :one a)))))
+         "Hello \\\" there!")
